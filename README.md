@@ -1,24 +1,33 @@
-# Real-Time Face Cloning — THA3 avatar wrapper
+# Real-Time Face Cloning — animated avatar wrapper
 
-A real-time wrapper around [Talking Head Anime 3 (THA3)](https://github.com/pkhungurn/talking-head-anime-3-demo),
-inspired by [EasyVtuber](https://github.com/GunwooHan/EasyVtuber), that animates a single
-character image and streams it to an **OBS virtual camera** — driven by your **webcam**,
-**procedurally by code/an AI agent**, or **both at once**.
+A real-time avatar engine that animates a single character image and streams it to an
+**OBS virtual camera** — driven by your **webcam**, **procedurally by code/an AI agent**,
+or **both at once**. Rendering is done by
+[FasterLivePortrait](https://github.com/warmshao/FasterLivePortrait) (TensorRT, default)
+or the legacy [Talking Head Anime 3 (THA3)](https://github.com/pkhungurn/talking-head-anime-3-demo)
+backend; the architecture is inspired by [EasyVtuber](https://github.com/GunwooHan/EasyVtuber).
 
 ```
                  ┌─────────────────────┐
   webcam ──────► │ WebcamDriver        │──┐
-  (MediaPipe)    └─────────────────────┘  │   ┌────────────┐   ┌──────────────────┐
-                                          ├──►│ THA3 poser │──►│ window preview   │
-  AI agent ────► ┌─────────────────────┐  │   │ (or mock)  │   │ OBS virtual cam  │
-  TCP/JSON or    │ ProceduralDriver    │──┘   └────────────┘   └──────────────────┘
-  in-process     │ emotions · visemes  │
+  (MediaPipe)    └─────────────────────┘  │   ┌──────────────┐   ┌──────────────────┐
+                                          ├──►│ LivePortrait │──►│ window preview   │
+  AI agent ────► ┌─────────────────────┐  │   │ / THA3 poser │   │ OBS virtual cam  │
+  TCP/JSON or    │ ProceduralDriver    │──┘   │ (or mock)    │   └──────────────────┘
+  in-process     │ emotions · visemes  │      └──────────────┘
                  │ gaze · idle motion  │
                  └─────────────────────┘
 ```
 
 ## Features
 
+- **LivePortrait renderer (default)** — wraps a
+  [FasterLivePortrait](https://github.com/warmshao/FasterLivePortrait) TensorRT pipeline
+  for photoreal-quality expression transfer (real smiles with teeth, natural gaze) at
+  ~30 FPS on an RTX-class GPU. The pipeline runs in a worker subprocess inside the
+  FasterLivePortrait package's own venv (its TensorRT engines are version-locked to it);
+  poses stream to the worker as LivePortrait motion descriptors, so no webcam or driving
+  video is needed. Point `--lp-path` at the package directory.
 - **Webcam driver** — MediaPipe FaceLandmarker face tracking: blinks, mouth shapes, eyebrows,
   iris/gaze, and head pose (solvePnP), with smoothing and press-`c`-to-calibrate.
 - **Procedural driver** — animate the avatar entirely from code: emotion presets with
@@ -65,7 +74,20 @@ driver, and your character art.
 pip install -r requirements.txt
 ```
 
-That covers webcam tracking and the virtual camera. For real rendering you also need THA3:
+That covers webcam tracking and the virtual camera. For real rendering you need one of
+the two backends below.
+
+**LivePortrait (default backend):** get a FasterLivePortrait Windows package (the
+extract-and-run build with its bundled `venv\python.exe`), build its TensorRT engines
+once for your GPU (`scripts\all_onnx2trt.bat` inside the package), and point `--lp-path`
+at the package directory (default: `../FasterLivePortrait/FasterLivePortrait-windows`).
+Nothing needs to be installed into this repo's venv — the backend runs the pipeline in a
+worker subprocess using the package's own Python. Character images with transparency are
+handled automatically (the character's alpha channel is reapplied to the rendered frames).
+Note: LivePortrait's face detector must find a face in the character image; for stylized
+art that fails detection, use a tighter head-and-shoulders crop for now.
+
+**THA3 (legacy backend, `--backend tha3`):**
 
 1. Install PyTorch matching your CUDA setup: <https://pytorch.org/get-started/locally/>
    (a GPU is strongly recommended; `separable_half` runs lightest).
@@ -93,9 +115,9 @@ on Linux load `v4l2loopback` (`sudo modprobe v4l2loopback devices=1`).
 # Try the pipeline with no GPU/models at all (placeholder renderer):
 python main.py --mock
 
-# Classic VTuber: webcam-driven, preview + OBS virtual camera:
-python main.py --char characters/char.png --driver webcam \
-    --tha-path ../talking-head-anime-3-demo --output window,virtualcam
+# Classic VTuber: webcam-driven, preview + OBS virtual camera
+# (LivePortrait renderer by default; add --backend tha3 for THA3):
+python main.py --char characters/char.png --driver webcam --output window,virtualcam
 
 # AI avatar: procedural driver + control server, virtual camera only:
 python main.py --char characters/char.png --driver procedural --output virtualcam
@@ -179,7 +201,7 @@ agent lives in the same Python program — see `tha_wrapper/drivers/procedural.p
 ```
 tha_wrapper/
   pose.py            # named 45-dim THA3 pose model (AvatarPose)
-  poser/             # THA3 backend (torch) + mock backend, image loading
+  poser/             # LivePortrait backend (worker subprocess) + THA3 + mock
   drivers/           # webcam (MediaPipe), procedural (AI-drivable), hybrid
   control/           # TCP JSON control server + AvatarClient
   output/            # preview window, OBS virtual camera, compositing

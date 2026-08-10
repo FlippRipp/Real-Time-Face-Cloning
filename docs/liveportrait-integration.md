@@ -2,7 +2,34 @@
 
 Status as of 2026-08-10. This documents the backend evaluation that led to
 choosing LivePortrait as the replacement for THA3, everything set up outside
-this repo, and the agreed integration design for the next session.
+this repo, and the agreed integration design.
+
+**Update (same day): steps 1 and 2 below are implemented** — see
+`tha_wrapper/poser/liveportrait_backend.py` (the `LivePortraitPoser` +
+adapter mapping) and `liveportrait_worker.py` (renders inside the package's
+own venv; the TensorRT 9.0.1 dev engines are version-locked to it, so
+in-process loading from this repo's Python 3.13 venv was ruled out).
+Verified offline at ~18 ms/frame (56 FPS) end-to-end on test_portrait.png.
+Implementation notes:
+
+- The pipeline's own `flag_eye/lip_retargeting` cfg flags are unusable for
+  us: in relative-motion mode they replace the whole pose with `x_s`
+  (pipeline `_run`, "use x_s" branch). Instead the worker calls
+  `retarget_eye`/`retarget_lip` directly and folds the keypoint-space deltas
+  into the descriptor's exp term divided by the effective scale — exactly
+  equivalent to the pipeline's own "add deltas, then stitch" order.
+- Neutral baseline: the source image's own motion descriptor is submitted as
+  frame 0 (`first_frame=True`), which collapses the relative-motion algebra
+  into absolute control (angles/t/scale/exp offsets from neutral).
+- Blink on anime sources can close only one eye — the 203-landmark model
+  misreads stylized eyes, so the source eye-close ratios are off per-eye.
+  Verified correct (both eyes) on photo_test.png. Fix belongs to step 3
+  (exp-based blinks) or landmark injection.
+- Head motion exposes a gray matte halo at the silhouette against the
+  static reused alpha (the flatten-matte is gray). Acceptable for now;
+  alpha recovery is part of the deferred compositing work.
+- Mapping constants (signs included) in `LivePortraitPoser` are tuned blind
+  like the webcam baselines — first suspects when live motion looks wrong.
 
 ## Why we're replacing THA3
 

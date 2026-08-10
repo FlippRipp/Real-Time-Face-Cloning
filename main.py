@@ -1,22 +1,21 @@
 #!/usr/bin/env python3
-"""CLI entry point for the THA3 avatar wrapper.
+"""CLI entry point for the avatar wrapper.
 
 Examples:
 
-  # Procedural avatar, mock renderer (no GPU / THA3 needed), preview window:
+  # Procedural avatar, mock renderer (no GPU / models needed), preview window:
   python main.py --mock
 
-  # Webcam-driven VTuber with the real THA3 models, output to OBS:
-  python main.py --char images/character.png --driver webcam \
-      --tha-path ../talking-head-anime-3-demo --output window,virtualcam
+  # LivePortrait-rendered avatar (default backend), procedural driver + control
+  # server, preview window + OBS virtual camera:
+  python main.py --char characters/char.png --output window,virtualcam
 
-  # AI-driven avatar: procedural driver + control server, virtual cam only:
-  python main.py --char images/character.png --driver procedural \
-      --tha-path ../talking-head-anime-3-demo --output virtualcam
+  # Same but with the legacy THA3 renderer:
+  python main.py --char characters/char.png --backend tha3 \
+      --tha-path ../talking-head-anime-3-demo
 
   # Hybrid: webcam tracking, but AI/hotkeys can override expressions:
-  python main.py --char images/character.png --driver hybrid \
-      --tha-path ../talking-head-anime-3-demo
+  python main.py --char characters/char.png --driver hybrid
 """
 
 import argparse
@@ -38,14 +37,32 @@ def parse_args() -> AppConfig:
                         default="procedural")
     parser.add_argument("--camera-index", type=int, default=0,
                         help="webcam device index")
+    parser.add_argument("--backend", choices=["liveportrait", "tha3", "mock"],
+                        default="liveportrait",
+                        help="poser backend (renderer)")
+    parser.add_argument("--lp-path",
+                        default="../FasterLivePortrait/FasterLivePortrait-windows",
+                        help="path to a FasterLivePortrait checkout with "
+                        "built TensorRT engines and its bundled venv")
+    parser.add_argument("--lp-cfg", default="configs/trt_infer.yaml",
+                        help="FasterLivePortrait inference config, relative "
+                        "to --lp-path")
+    parser.add_argument("--lp-python", default=None,
+                        help="python.exe to run the LivePortrait worker "
+                        "(default: <lp-path>/venv/python.exe)")
+    parser.add_argument("--lp-animal", action="store_true",
+                        help="use LivePortrait's animal models (pose only; "
+                        "eye/mouth retargeting is disabled)")
     parser.add_argument("--tha-path", default="../talking-head-anime-3-demo",
                         help="path to a talking-head-anime-3-demo checkout")
     parser.add_argument("--model", choices=MODEL_NAMES,
-                        default="separable_float")
+                        default="separable_float",
+                        help="THA3 model variant (tha3 backend)")
     parser.add_argument("--device", default="cuda",
-                        help="torch device (cuda, cuda:0, cpu, mps)")
+                        help="torch device for the tha3 backend")
     parser.add_argument("--mock", action="store_true",
-                        help="use the mock poser (no THA3/torch required)")
+                        help="use the mock poser (no GPU/models required); "
+                        "same as --backend mock")
     parser.add_argument("--output", default="window",
                         help="comma-separated: window,virtualcam")
     parser.add_argument("--output-size", type=int, default=512,
@@ -71,17 +88,22 @@ def parse_args() -> AppConfig:
         format="%(asctime)s %(name)s %(levelname)s: %(message)s",
     )
 
-    if not args.mock and not args.char_image_path:
-        parser.error("--char is required unless --mock is used")
+    if not args.mock and args.backend != "mock" and not args.char_image_path:
+        parser.error("--char is required unless the mock backend is used")
 
     return AppConfig(
         char_image_path=args.char_image_path,
         driver=args.driver,
         camera_index=args.camera_index,
+        backend=args.backend,
         mock=args.mock,
         tha_path=args.tha_path,
         model=args.model,
         device=args.device,
+        lp_path=args.lp_path,
+        lp_cfg=args.lp_cfg,
+        lp_python=args.lp_python,
+        lp_animal=args.lp_animal,
         outputs=[o.strip() for o in args.output.split(",") if o.strip()],
         output_size=args.output_size,
         fps=args.fps,

@@ -28,11 +28,16 @@ class AppConfig:
     driver: str = "procedural"          # webcam | procedural | hybrid
     camera_index: int = 0
     # Poser
-    mock: bool = False
+    backend: str = "liveportrait"       # liveportrait | tha3 | mock
+    mock: bool = False                  # shorthand: forces backend = mock
     tha_path: str = "../talking-head-anime-3-demo"
     model: str = "separable_float"
     device: str = "cuda"
     pose_size: int = 512                # mock poser canvas size
+    lp_path: str = "../FasterLivePortrait/FasterLivePortrait-windows"
+    lp_cfg: str = "configs/trt_infer.yaml"
+    lp_python: Optional[str] = None     # default: <lp_path>/venv/python.exe
+    lp_animal: bool = False
     # Output
     outputs: List[str] = field(default_factory=lambda: ["window"])
     output_size: int = 512
