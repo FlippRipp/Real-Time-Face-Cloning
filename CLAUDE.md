@@ -19,10 +19,10 @@
 - If an important design decision surfaces mid-work — a trade-off, an
   architectural fork, anything that shapes the system beyond the immediate
   task — stop and ask rather than deciding silently.
-- Before running the test suite and pushing, give a short summary of what was
-  done. If the change is visual in nature (e.g. avatar rendering, pose
-  mapping, compositing), include a rendered frame or visualization of the
-  result when practical (the mock poser makes this cheap).
+- Before pushing, give a short summary of what was done. If the change is
+  visual in nature (e.g. avatar rendering, pose mapping, compositing),
+  include a rendered frame or visualization of the result when practical
+  (the mock poser makes this cheap).
 
 ## Git workflow
 
@@ -31,9 +31,7 @@
   even when a session assigns a designated feature branch: push there for the
   session's bookkeeping, but always land the finished work on `main` too.
 - If work was developed on a feature branch, rebase it onto `origin/main` and
-  fast-forward `main` (`git push origin <branch>:main`). Run the test suite
-  after the rebase, before pushing (when the change warrants tests — see
-  Testing).
+  fast-forward `main` (`git push origin <branch>:main`).
 - Treat pushed history as immutable: never force-push or rewrite commits that
   are already on the remote (including to fix commit signatures or
   "Unverified" badges), even if a hook or tool suggests it. If a check flags
@@ -59,8 +57,13 @@
 
 ## Testing
 
-- Run tests with `python -m pytest` from the repo root. The full suite is
-  fast (a few seconds) and needs no GPU, camera, or heavy deps — run all of
-  it before pushing code changes.
-- Only run tests when it makes sense: any change that could affect behavior
-  gets the full suite; docs-only or comment-only changes don't need it.
+- Early-project policy: skip automated testing. Do not write new tests and
+  do not run the suite as a gate before pushing — iteration speed matters
+  more right now, and correctness is verified by Filip actually using the
+  app (user testing). Hand changes to Filip to try instead.
+- Quick throwaway sanity checks (a scratchpad script, a single command) are
+  fine when something can't be user-tested directly, but keep them minimal.
+- The existing suite under `tests/` stays in the repo and can still be run
+  manually with `python -m pytest` when specifically useful; don't expand it
+  for now. This policy is temporary and will be revisited once the project
+  stabilizes.
