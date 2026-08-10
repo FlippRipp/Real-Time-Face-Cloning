@@ -57,16 +57,26 @@ class Tha3Poser(PoserBackend):
             logger.warning("CUDA requested but not available; falling back to CPU")
             device = "cpu"
         self._device = torch.device(device)
-        self._poser = poser = load_poser(model, device)
-        self.size = poser.get_image_size()
-        self._dtype = poser.get_dtype()
 
-        self._index_of = self._build_parameter_index(poser)
-        self._num_parameters = poser.get_num_parameters()
+        # THA3 opens its model weights via paths relative to the process CWD
+        # ('data/models/...'), assuming it runs from its own checkout. Load
+        # (and warm up, which forces THA3's lazy weight loading) from there.
+        char_image_path = os.path.abspath(os.path.expanduser(char_image_path))
+        original_cwd = os.getcwd()
+        os.chdir(tha_path)
+        try:
+            self._poser = poser = load_poser(model, device)
+            self.size = poser.get_image_size()
+            self._dtype = poser.get_dtype()
 
-        self._input_image = self._load_input_image(char_image_path, tha_path)
-        # Warm up (first call compiles/allocates and is very slow).
-        self.pose(AvatarPose())
+            self._index_of = self._build_parameter_index(poser)
+            self._num_parameters = poser.get_num_parameters()
+
+            self._input_image = self._load_input_image(char_image_path, tha_path)
+            # Warm up (first call compiles/allocates and is very slow).
+            self.pose(AvatarPose())
+        finally:
+            os.chdir(original_cwd)
 
     @staticmethod
     def _build_parameter_index(poser) -> Dict[str, int]:
