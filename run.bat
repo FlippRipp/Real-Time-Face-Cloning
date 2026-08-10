@@ -25,9 +25,23 @@ echo   1. webcam      - your webcam drives the avatar
 echo   2. procedural  - idle animation + control server, no webcam needed
 echo   3. hybrid      - webcam tracking, procedural channels can override
 echo   4. mock        - pipeline test, no GPU/models/character needed
+echo   5. prepare     - character wizard: AI cutout + framing for new art
 set "MODE="
-set /p "MODE=Mode [1-4]: "
+set /p "MODE=Mode [1-5]: "
 
+if "!MODE!"=="5" (
+    set "SRC="
+    set /p "SRC=Path to the source image (drag ^& drop works): "
+    if defined SRC set "SRC=!SRC:"=!"
+    if not defined SRC (
+        echo No image given.
+        pause
+        exit /b 1
+    )
+    ".venv\Scripts\python.exe" -m tha_wrapper.prepare "!SRC!"
+    pause
+    exit /b
+)
 if "!MODE!"=="4" (
     ".venv\Scripts\python.exe" main.py --mock
     if errorlevel 1 pause

@@ -79,6 +79,10 @@ That covers webcam tracking and the virtual camera. For real rendering you also 
 3. Prepare a character image: 512×512 RGBA PNG, forward-facing anime-style character with
    transparent background, framed per the THA3 spec (head roughly in the upper half).
    Drop it in the `characters/` folder so `run.bat`'s menu can find it.
+   The preparation wizard (`python -m tha_wrapper.prepare art.png`, or run.bat menu
+   option 5) converts arbitrary art for you: AI background removal (rembg anime model),
+   face-detected framing against the THA3 guides, and a constraint report — every stage
+   previewed and adjustable before saving into `characters/`.
 
 For the virtual camera: on Windows/macOS install OBS (≥ 26) for its virtual camera driver;
 on Linux load `v4l2loopback` (`sudo modprobe v4l2loopback devices=1`).

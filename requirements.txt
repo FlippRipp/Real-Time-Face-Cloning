@@ -11,6 +11,11 @@ mediapipe>=0.10.9
 # OBS virtual camera output (--output virtualcam)
 pyvirtualcam
 
+# Character preparation wizard (python -m tha_wrapper.prepare): AI background
+# removal. Imported lazily; the anime matting model (~170 MB) downloads on
+# first use.
+rembg[cpu]
+
 # The real THA3 poser additionally needs PyTorch (install the build matching
 # your CUDA version from https://pytorch.org/get-started/locally/) plus a
 # checkout of https://github.com/pkhungurn/talking-head-anime-3-demo with its
