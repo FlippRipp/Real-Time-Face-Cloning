@@ -48,8 +48,9 @@ setup.bat
 This creates a `.venv`, installs all Python dependencies, installs PyTorch (the CUDA
 build if an NVIDIA GPU is detected), clones `talking-head-anime-3-demo` next to this
 repo, downloads the THA3 model weights (~800 MB, official link from the THA3 README),
-and verifies every model file. Then launch with `run.bat` (forwards arguments to
-`main.py`), e.g. `run.bat --mock`.
+and verifies every model file. Then launch with `run.bat`: with no arguments it shows
+an interactive menu (pick a mode, then pick a character from the `characters\` folder
+by number); with arguments it forwards them to `main.py`, e.g. `run.bat --mock`.
 
 Options: `setup.bat --torch cpu` (force CPU PyTorch), `setup.bat --skip-models`,
 `setup.bat --tha-dir D:\somewhere\tha3`. The underlying helper is cross-platform —
@@ -77,6 +78,7 @@ That covers webcam tracking and the virtual camera. For real rendering you also 
 
 3. Prepare a character image: 512×512 RGBA PNG, forward-facing anime-style character with
    transparent background, framed per the THA3 spec (head roughly in the upper half).
+   Drop it in the `characters/` folder so `run.bat`'s menu can find it.
 
 For the virtual camera: on Windows/macOS install OBS (≥ 26) for its virtual camera driver;
 on Linux load `v4l2loopback` (`sudo modprobe v4l2loopback devices=1`).
@@ -88,14 +90,14 @@ on Linux load `v4l2loopback` (`sudo modprobe v4l2loopback devices=1`).
 python main.py --mock
 
 # Classic VTuber: webcam-driven, preview + OBS virtual camera:
-python main.py --char images/char.png --driver webcam \
+python main.py --char characters/char.png --driver webcam \
     --tha-path ../talking-head-anime-3-demo --output window,virtualcam
 
 # AI avatar: procedural driver + control server, virtual camera only:
-python main.py --char images/char.png --driver procedural --output virtualcam
+python main.py --char characters/char.png --driver procedural --output virtualcam
 
 # Hybrid: you drive it with your face, the AI overrides expressions:
-python main.py --char images/char.png --driver hybrid
+python main.py --char characters/char.png --driver hybrid
 ```
 
 In OBS, add a *Video Capture Device* source and pick the virtual camera; with
