@@ -37,6 +37,27 @@ character image and streams it to an **OBS virtual camera** — driven by your *
 
 ## Installation
 
+### Windows one-shot setup
+
+```bat
+setup.bat
+```
+
+This creates a `.venv`, installs all Python dependencies, installs PyTorch (the CUDA
+build if an NVIDIA GPU is detected), clones `talking-head-anime-3-demo` next to this
+repo, downloads the THA3 model weights (~800 MB, official link from the THA3 README),
+and verifies every model file. Then launch with `run.bat` (forwards arguments to
+`main.py`), e.g. `run.bat --mock`.
+
+Options: `setup.bat --torch cpu` (force CPU PyTorch), `setup.bat --skip-models`,
+`setup.bat --tha-dir D:\somewhere\tha3`. The underlying helper is cross-platform —
+on Linux/macOS run `python scripts/setup_tha3.py` after `pip install -r requirements.txt`.
+
+The only things it can't install for you: OBS Studio (≥ 26) for the virtual camera
+driver, and your character art.
+
+### Manual setup
+
 ```bash
 pip install -r requirements.txt
 ```
