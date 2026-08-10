@@ -24,7 +24,9 @@ character image and streams it to an **OBS virtual camera** — driven by your *
 - **Procedural driver** — animate the avatar entirely from code: emotion presets with
   eased transitions, viseme-timeline lipsync (TTS-ready), `speak_text` placeholder
   lipsync, live audio-energy lipsync, gaze targeting with head-follow, auto-blink,
-  breathing, and organic idle sway. Fully thread-safe.
+  breathing, and organic idle sway. Fully thread-safe. Timed `perform` scripts let an
+  AI hand over a whole screenplay (emotion shifts, speech, glances, blinks) in one
+  non-blocking call; the driver executes the timing.
 - **Hybrid driver** — webcam tracking underneath, with procedural channels overriding
   per-parameter and easing back to tracking when released.
 - **Control server** — newline-delimited JSON over TCP (`127.0.0.1:9535`), plus a Python
@@ -121,6 +123,20 @@ with AvatarClient() as avatar:
     avatar.audio_energy(0.7)
 ```
 
+The highest-level primitive is `perform`: a timed script the driver plays out on its
+own clock, so one call carries a whole expressive performance and returns immediately —
+ideal for LLM tool calling:
+
+```python
+avatar.perform([
+    {"emotion": "surprised", "intensity": 1.0, "duration": 0.2},
+    {"at": 0.1, "blink": "double"},
+    {"at": 0.3, "say": "Oh! I was not expecting that at all."},
+    {"at": 0.9, "emotion": "amused", "intensity": 0.6},
+    {"at": 1.6, "look": [0.4, -0.1], "head_follow": 0.3},
+])
+```
+
 From any other language, send one JSON object per line:
 
 ```json
@@ -131,9 +147,9 @@ From any other language, send one JSON object per line:
 ```
 
 Commands: `emotion`, `pose` (raw THA3 parameters), `head`, `body`, `look`, `blink`,
-`speak_visemes`, `speak_text`, `talking`, `audio_energy`, `stop_speaking`, `idle`,
-`reset`, `state`, `emotions`, `help` — full argument reference in
-[`tha_wrapper/control/server.py`](tha_wrapper/control/server.py).
+`speak_visemes`, `speak_text`, `perform`, `stop_perform`, `talking`, `audio_energy`,
+`stop_speaking`, `idle`, `reset`, `state`, `emotions`, `help` — full argument reference
+in [`tha_wrapper/control/server.py`](tha_wrapper/control/server.py).
 
 Emotion presets: `neutral`, `happy`, `sad`, `angry`, `surprised`, `amused`, `smug`,
 `tired`, `confused` (defined in
@@ -144,9 +160,10 @@ Examples:
 
 - [`examples/scripted_performance.py`](examples/scripted_performance.py) — a scripted
   routine exercising emotions, gaze, blinks, and both lipsync paths.
-- [`examples/ai_agent_avatar.py`](examples/ai_agent_avatar.py) — a Claude-puppeted
-  avatar: the model returns a reply plus stage directions (emotion, gaze), and the
-  script performs them.
+- [`examples/ai_agent_avatar.py`](examples/ai_agent_avatar.py) — a JARVIS-style
+  companion: an LLM (any OpenAI-compatible endpoint; defaults to DeepSeek via
+  OpenRouter) writes timed stage scripts through a `perform` tool call, and the
+  avatar acts them out while the chat stays responsive.
 
 The `ProceduralDriver` can also be used directly in-process (it is thread-safe) if your
 agent lives in the same Python program — see `tha_wrapper/drivers/procedural.py`.

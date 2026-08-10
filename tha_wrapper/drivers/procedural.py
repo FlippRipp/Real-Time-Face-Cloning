@@ -17,6 +17,11 @@ Layering model (applied in order every frame):
 
 `touched()` reports which parameters this driver is actively claiming; the
 hybrid driver uses that to decide procedural-vs-webcam per parameter.
+
+On top of the layers sits `perform()`: a timed script of actions (emotion
+changes, speech, gaze, blinks...) that the driver schedules and fires on
+its own clock, so an AI can hand over a whole little screenplay in one
+non-blocking call instead of timing individual commands itself.
 """
 
 from __future__ import annotations
@@ -118,6 +123,45 @@ _VOWEL_TO_VISEME = {
 MOUTH_VOWEL_PARAMS = ("mouth_aaa", "mouth_iii", "mouth_uuu", "mouth_eee",
                       "mouth_ooo", "mouth_delta")
 
+# perform() script actions: action key -> modifier keys it accepts.
+SCRIPT_ACTIONS: Dict[str, Tuple[str, ...]] = {
+    "emotion": ("intensity", "duration"),
+    "say": ("seconds_per_syllable",),
+    "visemes": (),
+    "look": ("duration", "head_follow"),
+    "head": ("duration",),
+    "body": ("duration",),
+    "params": ("duration",),
+    "blink": (),
+    "talking": (),
+}
+
+# Script action kind -> driver method it fires.
+_SCRIPT_DISPATCH: Dict[str, str] = {
+    "emotion": "set_emotion",
+    "say": "speak_visemes",
+    "visemes": "speak_visemes",
+    "look": "look_at",
+    "head": "set_head",
+    "body": "set_body",
+    "params": "set_params",
+    "blink": "blink",
+    "talking": "set_talking",
+}
+
+
+def _text_to_viseme_events(
+    text: str, seconds_per_syllable: float
+) -> List[Tuple[str, float]]:
+    events: List[Tuple[str, float]] = []
+    for ch in text.lower():
+        if ch in _VOWEL_TO_VISEME:
+            events.append((_VOWEL_TO_VISEME[ch], seconds_per_syllable))
+        elif ch in " ,.!?;:\n":
+            events.append(("sil", seconds_per_syllable * 0.6))
+    events.append(("sil", 0.1))
+    return events
+
 
 def _smoothstep(t: float) -> float:
     t = min(1.0, max(0.0, t))
@@ -147,6 +191,14 @@ class _VisemeEvent:
     viseme: str
     duration: float
     weight: float = 1.0
+
+
+@dataclass
+class _ScriptAction:
+    at: float                 # offset from script start, seconds
+    kind: str                 # key into _SCRIPT_DISPATCH
+    kwargs: Dict[str, object] # arguments for the dispatched method
+    duration: float           # intrinsic duration, for the script-length estimate
 
 
 @dataclass
@@ -190,6 +242,8 @@ class ProceduralDriver(PoseDriver):
 
         self._speech = _SpeechState()
         self._emotion = ("neutral", 0.0)
+        self._script: List[_ScriptAction] = []  # pending, sorted by `at`
+        self._script_pos = 0.0
 
     # ------------------------------------------------------------------
     # Public control API (thread-safe)
@@ -304,15 +358,49 @@ class ProceduralDriver(PoseDriver):
         Good enough for placeholder lipsync when no TTS timings exist.
         Returns the total duration of the generated timeline.
         """
-        events: List[Tuple[str, float]] = []
-        for ch in text.lower():
-            if ch in _VOWEL_TO_VISEME:
-                events.append((_VOWEL_TO_VISEME[ch], seconds_per_syllable))
-            elif ch in " ,.!?;:\n":
-                events.append(("sil", seconds_per_syllable * 0.6))
-        events.append(("sil", 0.1))
+        events = _text_to_viseme_events(text, seconds_per_syllable)
         self.speak_visemes(events)
         return sum(d for _, d in events)
+
+    def perform(self, script: Sequence[Dict[str, object]]) -> float:
+        """Play a timed action script; replaces any script already playing.
+
+        Each action is a dict with an optional `at` offset (seconds from
+        script start, default 0) plus exactly one action key:
+
+            {"at": 0.0, "emotion": "happy", "intensity": 1.0, "duration": 0.4}
+            {"at": 0.2, "say": "Hello!", "seconds_per_syllable": 0.18}
+            {"at": 0.2, "visemes": [["oh", 0.18], ["aa", 0.22]]}
+            {"at": 1.5, "look": [0.4, -0.1], "duration": 0.15, "head_follow": 0.3}
+            {"at": 2.0, "head": {"pitch": 0.1, "yaw": -0.2, "roll": 0.1}}
+            {"at": 2.0, "body": {"y": 0.1, "z": 0.0}}
+            {"at": 2.2, "params": {"iris_small_left": 0.5}, "duration": 0.2}
+            {"at": 2.5, "blink": true}      # or "double"
+            {"at": 3.0, "talking": false}
+
+        Actions fire on the driver's clock as `update()` advances, so this
+        returns immediately; the whole script is validated up front and
+        rejected atomically on any error. Returns the estimated total
+        duration. An empty script cancels the current performance.
+        """
+        actions: List[_ScriptAction] = []
+        total = 0.0
+        for index, entry in enumerate(script):
+            action = self._parse_script_action(index, entry)
+            actions.append(action)
+            total = max(total, action.at + action.duration)
+        actions.sort(key=lambda a: a.at)  # stable: ties keep script order
+        with self._lock:
+            self._script = actions
+            self._script_pos = 0.0
+        return total
+
+    def stop_performance(self) -> None:
+        """Cancel pending script actions and stop speech; holds the pose."""
+        with self._lock:
+            self._script = []
+            self._script_pos = 0.0
+            self.stop_speaking()
 
     def set_talking(self, talking: bool) -> None:
         """Random mouth flapping — crude lipsync while audio plays."""
@@ -333,6 +421,8 @@ class ProceduralDriver(PoseDriver):
     def reset(self, duration: float = 0.3) -> None:
         """Ease everything back to neutral."""
         with self._lock:
+            self._script = []
+            self._script_pos = 0.0
             self.stop_speaking()
             self._emotion = ("neutral", 0.0)
             targets = {n: 0.0 for n in set(self._values) | set(self._tweens)}
@@ -344,6 +434,7 @@ class ProceduralDriver(PoseDriver):
                 "emotion": self._emotion[0],
                 "emotion_intensity": self._emotion[1],
                 "talking": self._speech.talking or bool(self._speech.timeline),
+                "performing": bool(self._script),
                 "auto_blink": self.auto_blink,
                 "breathing": self.breathing,
                 "idle_sway": self.idle_sway,
@@ -357,6 +448,7 @@ class ProceduralDriver(PoseDriver):
     def update(self, dt: float) -> AvatarPose:
         with self._lock:
             self._time += dt
+            self._advance_script(dt)
             self._advance_tweens(dt)
             pose = AvatarPose(self._values)
             touched = set(self._values) | set(self._tweens)
@@ -376,6 +468,118 @@ class ProceduralDriver(PoseDriver):
     # ------------------------------------------------------------------
     # Internals (call with lock held)
     # ------------------------------------------------------------------
+
+    def _parse_script_action(self, index: int, entry: object) -> _ScriptAction:
+        if not isinstance(entry, dict):
+            raise ValueError(f"script action #{index} must be an object")
+        keys = set(entry) - {"at"}
+        kinds = keys & set(SCRIPT_ACTIONS)
+        if len(kinds) != 1:
+            raise ValueError(
+                f"script action #{index} needs exactly one action key "
+                f"({', '.join(sorted(SCRIPT_ACTIONS))}); "
+                f"got {sorted(keys) or 'none'}"
+            )
+        kind = kinds.pop()
+        extra = keys - {kind} - set(SCRIPT_ACTIONS[kind])
+        if extra:
+            raise ValueError(
+                f"script action #{index} ({kind}): unknown keys {sorted(extra)}"
+            )
+        at = float(entry.get("at", 0.0))
+        if at < 0.0:
+            raise ValueError(f"script action #{index}: 'at' must be >= 0")
+
+        if kind == "emotion":
+            name = entry["emotion"]
+            if name not in EMOTIONS:
+                raise KeyError(
+                    f"script action #{index}: unknown emotion {name!r}; "
+                    f"available: {sorted(EMOTIONS)}"
+                )
+            duration = float(entry.get("duration", 0.4))
+            kwargs = {"name": name,
+                      "intensity": float(entry.get("intensity", 1.0)),
+                      "duration": duration}
+        elif kind == "say":
+            events = _text_to_viseme_events(
+                str(entry["say"]),
+                float(entry.get("seconds_per_syllable", 0.18)),
+            )
+            duration = sum(d for _, d in events)
+            kwargs = {"events": events}
+        elif kind == "visemes":
+            events = []
+            for event in entry["visemes"]:
+                event = tuple(event)
+                if not 2 <= len(event) <= 3 or event[0] not in VISEMES:
+                    raise ValueError(
+                        f"script action #{index}: visemes must be "
+                        f"[viseme, duration(, weight)] with viseme in "
+                        f"{sorted(VISEMES)}; got {event!r}"
+                    )
+                events.append(event)
+            duration = sum(float(e[1]) for e in events)
+            kwargs = {"events": events}
+        elif kind == "look":
+            target = entry["look"]
+            if not isinstance(target, (list, tuple)) or len(target) != 2:
+                raise ValueError(
+                    f"script action #{index}: 'look' must be [x, y]"
+                )
+            duration = float(entry.get("duration", 0.15))
+            kwargs = {"x": float(target[0]), "y": float(target[1]),
+                      "duration": duration,
+                      "head_follow": float(entry.get("head_follow", 0.0))}
+        elif kind in ("head", "body"):
+            axes = {"head": ("pitch", "yaw", "roll"), "body": ("y", "z")}[kind]
+            rotation = entry[kind]
+            if not isinstance(rotation, dict) or not rotation or \
+                    not set(rotation) <= set(axes):
+                raise ValueError(
+                    f"script action #{index}: {kind!r} must be an object "
+                    f"with keys from {axes}"
+                )
+            duration = float(entry.get("duration", 0.3 if kind == "head" else 0.4))
+            kwargs = {axis: float(value) for axis, value in rotation.items()}
+            kwargs["duration"] = duration
+        elif kind == "params":
+            params = entry["params"]
+            if not isinstance(params, dict):
+                raise ValueError(
+                    f"script action #{index}: 'params' must be an object "
+                    "of {param: value}"
+                )
+            for name in params:
+                if name not in POSE_PARAMETER_RANGES:
+                    raise KeyError(
+                        f"script action #{index}: unknown pose parameter "
+                        f"{name!r}"
+                    )
+            duration = float(entry.get("duration", 0.15))
+            kwargs = {"params": {k: float(v) for k, v in params.items()},
+                      "duration": duration}
+        elif kind == "blink":
+            flag = entry["blink"]
+            if not flag:
+                raise ValueError(
+                    f"script action #{index}: 'blink' must be true or "
+                    f"\"double\""
+                )
+            duration = self._blink_close + self._blink_open
+            kwargs = {"double": flag == "double"}
+        else:  # talking
+            duration = 0.0
+            kwargs = {"talking": bool(entry["talking"])}
+        return _ScriptAction(at, kind, kwargs, duration)
+
+    def _advance_script(self, dt: float) -> None:
+        if not self._script:
+            return
+        self._script_pos += dt
+        while self._script and self._script[0].at <= self._script_pos:
+            action = self._script.pop(0)
+            getattr(self, _SCRIPT_DISPATCH[action.kind])(**action.kwargs)
 
     def _current_value(self, name: str) -> float:
         tween = self._tweens.get(name)

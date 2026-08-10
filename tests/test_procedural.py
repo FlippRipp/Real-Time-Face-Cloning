@@ -176,6 +176,110 @@ def test_touched_reflects_activity():
     assert driver.touched() == set()
 
 
+def test_perform_fires_actions_at_their_offsets():
+    driver = make_driver()
+    driver.perform([
+        {"emotion": "happy", "duration": 0.1},
+        {"at": 1.0, "look": [0.6, -0.2], "duration": 0.05},
+    ])
+    early = run(driver, 0.5)
+    assert early.get("eyebrow_happy_left") == pytest.approx(1.0, abs=1e-4)
+    assert early.get("iris_rotation_y") == 0.0  # look not fired yet
+    assert driver.state()["performing"] is True
+    late = run(driver, 1.0)
+    assert late.get("iris_rotation_y") == pytest.approx(0.6, abs=1e-4)
+    assert driver.state()["performing"] is False
+
+
+def test_perform_say_returns_duration_and_moves_mouth():
+    driver = make_driver()
+    duration = driver.perform([{"at": 0.2, "say": "hello avatar"}])
+    assert duration > 0.5  # 0.2 offset + speech
+    moved = 0.0
+    for _ in range(int(duration * 60) + 10):
+        pose = driver.update(1 / 60)
+        moved = max(moved, *(pose.get(n) for n in
+                             ("mouth_aaa", "mouth_eee", "mouth_ooo",
+                              "mouth_iii", "mouth_uuu")))
+    assert moved > 0.4
+
+
+def test_perform_new_script_replaces_pending():
+    driver = make_driver()
+    driver.perform([{"at": 0.5, "emotion": "angry", "duration": 0.05}])
+    run(driver, 0.1)
+    driver.perform([{"at": 0.1, "emotion": "happy", "duration": 0.05}])
+    pose = run(driver, 1.0)
+    assert pose.get("eyebrow_angry_left") == pytest.approx(0.0, abs=1e-4)
+    assert pose.get("eyebrow_happy_left") == pytest.approx(1.0, abs=1e-4)
+
+
+def test_perform_empty_script_cancels():
+    driver = make_driver()
+    driver.perform([{"at": 0.5, "emotion": "angry"}])
+    assert driver.perform([]) == 0.0
+    pose = run(driver, 1.0)
+    assert pose.get("eyebrow_angry_left") == 0.0
+
+
+def test_perform_rejects_bad_scripts_atomically():
+    driver = make_driver()
+    with pytest.raises(ValueError, match="exactly one action key"):
+        driver.perform([{"emotion": "happy"}, {"at": 0.1}])
+    with pytest.raises(ValueError, match="unknown keys"):
+        driver.perform([{"emotion": "happy", "head_follow": 0.3}])
+    with pytest.raises(KeyError, match="unknown emotion"):
+        driver.perform([{"emotion": "melancholy"}])
+    with pytest.raises(KeyError, match="unknown pose parameter"):
+        driver.perform([{"params": {"tail_wag": 1.0}}])
+    # Nothing from the rejected scripts was scheduled.
+    pose = run(driver, 0.5)
+    assert pose == type(pose)()
+    assert driver.state()["performing"] is False
+
+
+def test_perform_blink_and_talking_actions():
+    driver = make_driver()
+    driver.perform([
+        {"blink": True},
+        {"at": 0.05, "talking": True},
+        {"at": 0.6, "talking": False},
+    ])
+    peak = 0.0
+    for _ in range(60):
+        pose = driver.update(1 / 60)
+        peak = max(peak, pose.get("eye_wink_left"))
+    assert peak > 0.9
+    settled = run(driver, 1.5)
+    assert settled.get("mouth_aaa") == pytest.approx(0.0, abs=0.01)
+
+
+def test_stop_performance_cancels_but_holds_pose():
+    driver = make_driver()
+    driver.perform([
+        {"emotion": "happy", "duration": 0.05},
+        {"say": "hello hello hello"},
+        {"at": 5.0, "emotion": "angry", "duration": 0.05},
+    ])
+    run(driver, 0.3)
+    driver.stop_performance()
+    state = driver.state()
+    assert state["performing"] is False
+    assert state["talking"] is False
+    pose = run(driver, 1.0)
+    assert pose.get("eyebrow_happy_left") == pytest.approx(1.0, abs=1e-4)
+    assert pose.get("eyebrow_angry_left") == 0.0
+
+
+def test_reset_cancels_performance():
+    driver = make_driver()
+    driver.perform([{"at": 2.0, "emotion": "angry"}])
+    driver.reset(duration=0.05)
+    pose = run(driver, 3.0)
+    assert pose == type(pose)()
+    assert driver.state()["performing"] is False
+
+
 def test_visemes_registry_valid():
     from tha_wrapper.pose import POSE_PARAMETER_RANGES
 

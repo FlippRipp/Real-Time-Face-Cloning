@@ -15,6 +15,21 @@ Commands (arguments in brackets are optional):
   blink        [double=false]
   speak_visemes  events=[[viseme, duration] | [viseme, duration, weight], ...]
   speak_text   text [seconds_per_syllable=0.18]
+  perform      script=[action, ...]  -> {"ok": true, "duration": seconds}
+               Timed, non-blocking performance script. Each action has an
+               optional "at" offset (seconds from script start) plus exactly
+               one of:
+                 {"at": 0.0, "emotion": "happy", "intensity": 1.0}
+                 {"at": 0.2, "say": "Hello!"}
+                 {"at": 0.2, "visemes": [["oh", 0.18], ["aa", 0.22]]}
+                 {"at": 1.5, "look": [0.4, -0.1], "head_follow": 0.3}
+                 {"at": 2.0, "head": {"pitch": 0.1, "yaw": -0.2}}
+                 {"at": 2.0, "body": {"y": 0.1}}
+                 {"at": 2.2, "params": {"iris_small_left": 0.5}}
+                 {"at": 2.5, "blink": true}   (or "double")
+                 {"at": 3.0, "talking": false}
+               A new script replaces the current one; [] cancels.
+  stop_perform                 (cancel script + speech, hold the pose)
   talking      on=true|false
   audio_energy level             (0..1, call repeatedly while audio plays)
   stop_speaking
@@ -137,6 +152,15 @@ class ControlServer:
             str(r["text"]), float(r.get("seconds_per_syllable", 0.18))
         )
         return {"duration": duration}
+
+    def _cmd_perform(self, r):
+        script = r["script"]
+        if not isinstance(script, list):
+            raise ValueError("'script' must be a list of action objects")
+        return {"duration": self.driver.perform(script)}
+
+    def _cmd_stop_perform(self, r):
+        self.driver.stop_performance()
 
     def _cmd_talking(self, r):
         self.driver.set_talking(bool(r.get("on", True)))

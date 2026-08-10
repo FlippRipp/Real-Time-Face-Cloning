@@ -76,6 +76,37 @@ def test_idle_toggles(server, client):
     assert server.driver.idle_sway_amount == 0.5
 
 
+def test_perform_roundtrip(server, client):
+    duration = client.perform([
+        {"emotion": "surprised", "duration": 0.05},
+        {"at": 0.1, "say": "oh hello"},
+        {"at": 0.3, "look": [0.5, 0.0], "duration": 0.05},
+    ])
+    assert duration > 0.3
+    pose = run(server.driver, 1.5)
+    assert pose.get("eyebrow_raised_left") == pytest.approx(1.0, abs=1e-4)
+    assert pose.get("iris_rotation_y") == pytest.approx(0.5, abs=1e-4)
+
+
+def test_perform_bad_script_reports_error(server, client):
+    with pytest.raises(RuntimeError, match="unknown emotion"):
+        client.perform([{"emotion": "melancholy"}])
+    with pytest.raises(RuntimeError, match="must be a list"):
+        client.send("perform", script={"emotion": "happy"})
+    # channel still alive afterwards
+    assert client.emotions()
+
+
+def test_stop_perform(server, client):
+    client.perform([{"say": "hello"}, {"at": 9.0, "emotion": "angry"}])
+    run(server.driver, 0.1)
+    client.stop_perform()
+    state = client.state()
+    assert state["performing"] is False
+    assert state["talking"] is False
+
+
 def test_help_lists_commands(server, client):
     commands = client.send("help")["commands"]
     assert "emotion" in commands and "speak_visemes" in commands
+    assert "perform" in commands and "stop_perform" in commands

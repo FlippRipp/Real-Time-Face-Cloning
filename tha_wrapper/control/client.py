@@ -88,6 +88,18 @@ class AvatarClient:
             "speak_text", text=text, seconds_per_syllable=seconds_per_syllable
         )["duration"]
 
+    def perform(self, script: Sequence[Dict]) -> float:
+        """Play a timed action script (non-blocking); returns its duration.
+
+        See control/server.py's `perform` command for the script format.
+        A new script replaces the current one; an empty list cancels.
+        """
+        return self.send("perform", script=list(script))["duration"]
+
+    def stop_perform(self) -> None:
+        """Cancel the current script and speech, holding the pose."""
+        self.send("stop_perform")
+
     def talking(self, on: bool = True) -> None:
         self.send("talking", on=on)
 
