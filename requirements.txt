@@ -3,8 +3,10 @@ numpy
 opencv-python
 Pillow
 
-# Webcam face tracking (--driver webcam / hybrid)
-mediapipe
+# Webcam face tracking (--driver webcam / hybrid). The driver uses the
+# tasks.FaceLandmarker API (the only API in mediapipe 1.0 / Python 3.13
+# wheels); the ~4 MB .task model is downloaded by setup or on first use.
+mediapipe>=0.10.9
 
 # OBS virtual camera output (--output virtualcam)
 pyvirtualcam

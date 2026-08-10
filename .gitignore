@@ -8,3 +8,4 @@ venv/
 .vscode/
 images/
 !images/.gitkeep
+models/

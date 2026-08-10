@@ -1,14 +1,20 @@
-"""Webcam pose driver: MediaPipe FaceMesh -> THA3 pose parameters.
+"""Webcam pose driver: MediaPipe FaceLandmarker -> THA3 pose parameters.
 
 Same role as EasyVtuber's webcam/OpenSeeFace input path, but self-contained:
-only OpenCV + MediaPipe. A capture thread keeps grabbing frames so the render
-loop never blocks on the camera; `update()` just processes the latest frame.
+only OpenCV + MediaPipe. Uses the mediapipe `tasks` FaceLandmarker API (the
+legacy `solutions.face_mesh` API was dropped in mediapipe 1.0 and never
+shipped for Python 3.13); it outputs the same 478 landmarks, so the mapping
+below is unchanged from the FaceMesh version. The ~4 MB `.task` model file
+is downloaded on first use (or by setup) into `models/`.
+
+A capture thread keeps grabbing frames so the render loop never blocks on
+the camera; `update()` just processes the latest frame.
 
 Mapping summary:
 * eye openness  -> eye_wink_left/right (eye aspect ratio, calibrated)
 * mouth open    -> mouth_aaa, mouth wide/narrow -> mouth_iii / mouth_uuu mix
 * brow height   -> eyebrow_raised / eyebrow_lowered
-* iris position -> iris_rotation_x/y (needs refine_landmarks iris points)
+* iris position -> iris_rotation_x/y (iris landmarks 468..477)
 * head pose     -> head_x (pitch), head_y (yaw), neck_z (roll) via solvePnP
 
 Press-to-calibrate: call `calibrate()` while facing the camera neutrally; the
@@ -19,8 +25,10 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import threading
 import time
+import urllib.request
 from typing import Dict, Optional
 
 import numpy as np
@@ -30,7 +38,31 @@ from tha_wrapper.pose import AvatarPose
 
 logger = logging.getLogger(__name__)
 
-# FaceMesh landmark indices.
+# FaceLandmarker model, pinned (google-hosted, ~4 MB).
+FACE_LANDMARKER_MODEL_URL = (
+    "https://storage.googleapis.com/mediapipe-models/face_landmarker/"
+    "face_landmarker/float16/1/face_landmarker.task"
+)
+DEFAULT_FACE_LANDMARKER_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "models",
+    "face_landmarker.task",
+)
+
+
+def ensure_face_landmarker_model(path: str = DEFAULT_FACE_LANDMARKER_PATH) -> str:
+    """Download the FaceLandmarker .task model to `path` if not present."""
+    if not os.path.isfile(path):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        logger.info("downloading %s to %s", FACE_LANDMARKER_MODEL_URL, path)
+        partial = path + ".part"
+        urllib.request.urlretrieve(FACE_LANDMARKER_MODEL_URL, partial)
+        os.replace(partial, path)
+    return path
+
+
+# Face landmark indices (FaceLandmarker, same topology as FaceMesh with
+# refine_landmarks: 468 mesh points + 10 iris points).
 _L_EYE_TOP, _L_EYE_BOTTOM, _L_EYE_OUTER, _L_EYE_INNER = 159, 145, 33, 133
 _R_EYE_TOP, _R_EYE_BOTTOM, _R_EYE_OUTER, _R_EYE_INNER = 386, 374, 263, 362
 _L_BROW, _R_BROW = 105, 334
@@ -71,15 +103,20 @@ class WebcamDriver(PoseDriver):
         camera_index: int = 0,
         smoothing: float = 0.35,
         mirror: bool = True,
+        model_path: str = DEFAULT_FACE_LANDMARKER_PATH,
     ):
         """`smoothing` is EMA weight of the previous value (0 = raw)."""
         self.camera_index = camera_index
         self.smoothing = smoothing
         self.mirror = mirror
+        self.model_path = model_path
         self.baseline = _Baseline()
 
         self._capture = None
-        self._face_mesh = None
+        self._mp = None
+        self._landmarker = None
+        self._start_time = 0.0
+        self._last_timestamp_ms = -1
         self._thread: Optional[threading.Thread] = None
         self._running = False
         self._frame_lock = threading.Lock()
@@ -98,12 +135,19 @@ class WebcamDriver(PoseDriver):
         self._capture = cv2.VideoCapture(self.camera_index)
         if not self._capture.isOpened():
             raise RuntimeError(f"could not open webcam index {self.camera_index}")
-        self._face_mesh = mp.solutions.face_mesh.FaceMesh(
-            max_num_faces=1,
-            refine_landmarks=True,  # enables iris landmarks
-            min_detection_confidence=0.5,
+        self._mp = mp
+        options = mp.tasks.vision.FaceLandmarkerOptions(
+            base_options=mp.tasks.BaseOptions(
+                model_asset_path=ensure_face_landmarker_model(self.model_path)
+            ),
+            running_mode=mp.tasks.vision.RunningMode.VIDEO,
+            num_faces=1,
+            min_face_detection_confidence=0.5,
             min_tracking_confidence=0.5,
         )
+        self._landmarker = mp.tasks.vision.FaceLandmarker.create_from_options(options)
+        self._start_time = time.monotonic()
+        self._last_timestamp_ms = -1
         self._running = True
         self._thread = threading.Thread(target=self._capture_loop, daemon=True)
         self._thread.start()
@@ -114,8 +158,8 @@ class WebcamDriver(PoseDriver):
             self._thread.join(timeout=2.0)
         if self._capture is not None:
             self._capture.release()
-        if self._face_mesh is not None:
-            self._face_mesh.close()
+        if self._landmarker is not None:
+            self._landmarker.close()
 
     def calibrate(self) -> None:
         """Treat the current face as neutral (call while relaxed, facing camera)."""
@@ -141,12 +185,15 @@ class WebcamDriver(PoseDriver):
 
         if frame is not None:
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = self._face_mesh.process(rgb)
-            landmarks = (
-                results.multi_face_landmarks[0].landmark
-                if results.multi_face_landmarks
-                else None
+            image = self._mp.Image(image_format=self._mp.ImageFormat.SRGB, data=rgb)
+            # VIDEO mode requires strictly increasing timestamps.
+            timestamp_ms = max(
+                int((time.monotonic() - self._start_time) * 1000.0),
+                self._last_timestamp_ms + 1,
             )
+            self._last_timestamp_ms = timestamp_ms
+            results = self._landmarker.detect_for_video(image, timestamp_ms)
+            landmarks = results.face_landmarks[0] if results.face_landmarks else None
             if landmarks is not None:
                 self._face_seen = True
                 raw = self._extract(landmarks, frame.shape[1], frame.shape[0])
@@ -242,7 +289,7 @@ class WebcamDriver(PoseDriver):
             for side in ("left", "right"):
                 raw[f"eyebrow_lowered_{side}"] = clamp01(-brow_delta)
 
-        # Iris (refine_landmarks gives 468..477).
+        # Iris (FaceLandmarker always includes iris points 468..477).
         if len(lm) > _R_IRIS[-1]:
             l_iris = np.mean([point(i) for i in _L_IRIS], axis=0)
             r_iris = np.mean([point(i) for i in _R_IRIS], axis=0)

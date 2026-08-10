@@ -13,6 +13,8 @@ Steps (each skipped automatically when already done):
   3. Download the THA3 model weights (~800 MB zip, official Dropbox link
      from the THA3 README) and unpack them into <tha-dir>/data/models.
   4. Verify every expected model file exists.
+  5. Download the MediaPipe FaceLandmarker model (~4 MB) for the webcam
+     driver into <repo>/models.
 """
 
 from __future__ import annotations
@@ -179,6 +181,24 @@ def install_models(tha_dir: str, url: str) -> None:
 
 
 # ----------------------------------------------------------------------
+# Step 5: MediaPipe FaceLandmarker model (webcam driver)
+# ----------------------------------------------------------------------
+
+def install_face_landmarker() -> None:
+    sys.path.insert(0, REPO_ROOT)
+    from tha_wrapper.drivers.webcam import (
+        DEFAULT_FACE_LANDMARKER_PATH,
+        ensure_face_landmarker_model,
+    )
+
+    if os.path.isfile(DEFAULT_FACE_LANDMARKER_PATH):
+        info("FaceLandmarker model already present")
+        return
+    info("downloading the MediaPipe FaceLandmarker model (~4 MB) ...")
+    ensure_face_landmarker_model()
+
+
+# ----------------------------------------------------------------------
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -205,6 +225,7 @@ def main() -> None:
                 + "\n  ".join(missing)
             )
         info("all model files verified")
+    install_face_landmarker()
 
     sample = os.path.join(tha_dir, "data", "images", "lambda_00.png")
     print()

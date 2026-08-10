@@ -19,7 +19,7 @@ character image and streams it to an **OBS virtual camera** — driven by your *
 
 ## Features
 
-- **Webcam driver** — MediaPipe FaceMesh face tracking: blinks, mouth shapes, eyebrows,
+- **Webcam driver** — MediaPipe FaceLandmarker face tracking: blinks, mouth shapes, eyebrows,
   iris/gaze, and head pose (solvePnP), with smoothing and press-`c`-to-calibrate.
 - **Procedural driver** — animate the avatar entirely from code: emotion presets with
   eased transitions, viseme-timeline lipsync (TTS-ready), `speak_text` placeholder
