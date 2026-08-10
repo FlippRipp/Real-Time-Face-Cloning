@@ -1,0 +1,15 @@
+# Core
+numpy
+opencv-python
+Pillow
+
+# Webcam face tracking (--driver webcam / hybrid)
+mediapipe
+
+# OBS virtual camera output (--output virtualcam)
+pyvirtualcam
+
+# The real THA3 poser additionally needs PyTorch (install the build matching
+# your CUDA version from https://pytorch.org/get-started/locally/) plus a
+# checkout of https://github.com/pkhungurn/talking-head-anime-3-demo with its
+# model weights. The --mock mode runs with just the packages above.
